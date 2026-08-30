@@ -11,6 +11,9 @@ from typing import Callable, Optional
 # 工作目录：文件类工具只允许在此目录内读写
 WORKSPACE = Path.cwd()
 
+# 生成文件的统一输出目录（工作目录下的 out/）
+OUTPUT_DIR_NAME = "out"
+
 # 极端危险命令：直接拒绝执行
 FORBIDDEN_PATTERNS = [
     r"\bformat\b",
@@ -52,6 +55,25 @@ def resolve_in_workspace(path: str) -> Path:
     if resolved != WORKSPACE and WORKSPACE not in resolved.parents:
         raise PermissionError(f"路径越出工作目录，已拒绝：{path}")
     return resolved
+
+
+def resolve_output(path: str) -> Path:
+    """解析生成文件的写入路径：未带 out/ 前缀时自动落到 out/ 目录下。"""
+    target = resolve_in_workspace(path)
+    out_dir = resolve_in_workspace(OUTPUT_DIR_NAME)
+    if target != out_dir and out_dir not in target.parents:
+        target = (out_dir / path).resolve()
+    return target
+
+
+def resolve_existing(path: str) -> Path:
+    """读取/编辑用：优先按原路径解析，不存在时回退到 out/ 目录下查找。"""
+    target = resolve_in_workspace(path)
+    if not target.exists():
+        fallback = resolve_output(path)
+        if fallback.exists():
+            return fallback
+    return target
 
 
 def classify_command(command: str) -> str:

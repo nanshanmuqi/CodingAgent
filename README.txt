@@ -25,7 +25,8 @@
 启动
 ----
 在项目根目录执行：
-    python -m agent.cli
+    python -m agent.cli                在当前终端交互
+    python -m agent.cli --new-window   唤起独立的新终端窗口进行交互
 
 启动后在"User >"提示符下直接描述编程任务，例如：
     读取当前目录的 main.py，解释它的功能
@@ -53,14 +54,14 @@ read_file / write_file / edit_file / run_command / grep / glob
 项目结构
 --------
 agent/
-    cli.py          CLI 入口：REPL、流式输出、斜杠命令
+    cli.py          CLI 入口：REPL、流式输出、工作状态显示、斜杠命令（rich 行内渲染）
     config.py       环境变量/配置加载与校验
     client.py       LLM 调用封装：重试、流式解析、tool_calls 拼装
     loop.py         Agent 主循环与全部终止条件
     context.py      消息历史、token 估算、上下文裁剪压缩
-    permissions.py  路径防护与命令分级审批
+    permissions.py  路径防护、命令分级审批、out/ 输出目录解析
     tools/          6 个工具的 schema 定义与本地实现、注册表
-tests/              单元测试（pytest，32 个用例）
+tests/              单元测试（pytest，35 个用例）
 
 运行测试
 --------

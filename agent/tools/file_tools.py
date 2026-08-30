@@ -4,7 +4,7 @@
 """
 from __future__ import annotations
 
-from ..permissions import resolve_in_workspace
+from ..permissions import resolve_existing, resolve_in_workspace, resolve_output
 from .base import Tool, ToolResult
 
 # 单次读取的最大行数与单行最大长度，避免超大文件撑爆上下文
@@ -13,7 +13,7 @@ MAX_LINE_LENGTH = 2000
 
 
 def _read_file(path: str, offset: int = 1, limit: int = MAX_READ_LINES) -> ToolResult:
-    target = resolve_in_workspace(path)
+    target = resolve_existing(path)
     if not target.is_file():
         return ToolResult(ok=False, error=f"文件不存在：{path}")
 
@@ -34,14 +34,15 @@ def _read_file(path: str, offset: int = 1, limit: int = MAX_READ_LINES) -> ToolR
 
 
 def _write_file(path: str, content: str) -> ToolResult:
-    target = resolve_in_workspace(path)
+    target = resolve_output(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
-    return ToolResult(ok=True, output=f"已写入 {path}（{len(content)} 字符）")
+    actual = target.relative_to(resolve_in_workspace("."))
+    return ToolResult(ok=True, output=f"已写入 {actual}（{len(content)} 字符）")
 
 
 def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) -> ToolResult:
-    target = resolve_in_workspace(path)
+    target = resolve_existing(path)
     if not target.is_file():
         return ToolResult(ok=False, error=f"文件不存在：{path}")
 
@@ -77,7 +78,7 @@ read_file_tool = Tool(
 
 write_file_tool = Tool(
     name="write_file",
-    description="创建或覆写工作目录内的文件，自动创建父目录。",
+    description="创建或覆写文件，自动创建父目录。新生成的文件统一写入 out/ 目录（路径未带 out/ 前缀时会自动补全）。",
     parameters={
         "type": "object",
         "properties": {

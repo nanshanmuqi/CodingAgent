@@ -31,14 +31,17 @@ class AgentLoop:
         on_text: Optional[Callable[[str], None]] = None,
         on_tool_call: Optional[Callable[[str, dict], None]] = None,
         on_tool_result: Optional[Callable[[str, bool], None]] = None,
+        on_status: Optional[Callable[[str, int], None]] = None,
     ):
         self._config = config
         self._client = client
         self._history = history
-        # 回调：流式文本 / 工具调用开始 / 工具执行结束（供 CLI 展示，可全部留空）
+        # 回调：流式文本 / 工具调用开始 / 工具执行结束 / 状态变化（供 CLI 展示，可全部留空）
         self._on_text = on_text
         self._on_tool_call = on_tool_call
         self._on_tool_result = on_tool_result
+        # on_status(event, round_no)：目前仅 "waiting_model"（每次请求模型前触发）
+        self._on_status = on_status
 
         self.total_tokens_used = 0  # 累计 token 用量（按 API 返回的 usage 统计）
 
@@ -55,6 +58,9 @@ class AgentLoop:
                 return f"[已停止] 累计 token 用量达到预算上限（{self._config.token_budget}）。"
 
             self._history.prune()
+
+            if self._on_status:
+                self._on_status("waiting_model", round_no)
 
             try:
                 response = self._client.chat(

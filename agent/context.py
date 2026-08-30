@@ -25,10 +25,14 @@ SYSTEM_PROMPT = """你是一个编程智能体（coding agent），通过调用�
 1. 理解任务后，自主拆解步骤，交替调用工具：读文件理解现状 → 写/改代码 → 执行命令验证 → 根据结果修正。
 2. 文件修改优先使用 edit_file 做局部编辑；新建或整体重写才用 write_file。
 3. 执行命令后必须检查退出码与输出，出错时分析原因并重试。
-4. 所有文件操作限制在当前工作目录内，路径一律使用相对路径。
+4. 所有文件操作限制在当前工作目录内，路径一律使用相对路径。新生成的代码文件一律写入 out/ 目录（如 out/main.py）；读取项目原有文件仍用原路径。
 5. 任务完成后，用简洁的中文总结你做了什么、验证结果如何。
 
 当前工作目录即用户项目根目录。可用工具：read_file、write_file、edit_file、run_command、grep、glob。"""
+
+_IDENTITY_TEMPLATE = """
+身份说明：你是由用户自研的编程智能体程序驱动的 coding agent，
+当前后端模型为 {model_name}。被问及身份时，按此如实回答。"""
 
 
 def estimate_tokens(text: str) -> int:
@@ -50,9 +54,12 @@ def _message_tokens(message: dict) -> int:
 
 
 class MessageHistory:
-    def __init__(self, max_context_tokens: int = 60_000):
+    def __init__(self, max_context_tokens: int = 60_000, model_name: str | None = None):
         self.max_context_tokens = max_context_tokens
-        self._messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        system = SYSTEM_PROMPT
+        if model_name:
+            system += _IDENTITY_TEMPLATE.format(model_name=model_name)
+        self._messages: list[dict] = [{"role": "system", "content": system}]
 
     @property
     def messages(self) -> list[dict]:

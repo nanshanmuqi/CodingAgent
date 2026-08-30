@@ -12,6 +12,15 @@ def test_system_prompt_present():
     assert history.messages[0]["content"]
 
 
+def test_system_prompt_includes_model_identity():
+    """传入模型名时 system prompt 应包含身份说明，避免模型沿训练数据自称 Claude 等。"""
+    history = MessageHistory(max_context_tokens=1000, model_name="deepseek-chat")
+    content = history.messages[0]["content"]
+    assert "deepseek-chat" in content and "身份说明" in content
+    # 不传模型名时保持原样，不附带身份说明
+    assert "身份说明" not in make_history().messages[0]["content"]
+
+
 def test_add_messages_and_reset():
     history = make_history()
     history.add_user("任务一")

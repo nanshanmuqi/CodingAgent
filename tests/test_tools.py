@@ -26,10 +26,17 @@ def make_tool_call(name: str, arguments: str) -> dict:
 def test_write_and_read_file(workspace):
     result = _write_file("src/hello.py", "print('hi')\n")
     assert result.ok
-    assert (workspace / "src" / "hello.py").exists()  # 自动创建父目录
+    # 生成文件统一落到 out/ 目录，自动创建父目录
+    assert (workspace / "out" / "src" / "hello.py").exists()
 
     result = _read_file("src/hello.py")
     assert result.ok and "print('hi')" in result.output
+
+
+def test_write_file_keeps_out_prefix(workspace):
+    _write_file("out/x.py", "x = 1\n")
+    assert (workspace / "out" / "x.py").exists()
+    assert not (workspace / "out" / "out" / "x.py").exists()
 
 
 def test_read_file_truncation(workspace):
@@ -47,7 +54,7 @@ def test_edit_file_unique(workspace):
     _write_file("a.py", "x = 1\ny = 2\n")
     result = _edit_file("a.py", "x = 1", "x = 10")
     assert result.ok
-    assert (workspace / "a.py").read_text().startswith("x = 10")
+    assert (workspace / "out" / "a.py").read_text().startswith("x = 10")
 
 
 def test_edit_file_not_found_and_ambiguous(workspace):

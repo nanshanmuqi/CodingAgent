@@ -79,6 +79,19 @@ def test_tool_call_then_answer(config):
     assert "tool" in second_call_roles
 
 
+def test_status_callback_reports_real_state(config):
+    """on_status 在每次请求模型前触发一次，事件与轮次均来自主循环实际状态。"""
+    events: list[tuple[str, int]] = []
+    agent, _ = make_agent(config, [
+        tool_call_response("write_file", {"path": "a.txt", "content": "hi"}),
+        text_response("完成"),
+    ])
+    agent._on_status = lambda event, round_no: events.append((event, round_no))
+    assert agent.run("任务") == "完成"
+    # 两次调用模型 → 两次 waiting_model，轮次递增
+    assert events == [("waiting_model", 1), ("waiting_model", 2)]
+
+
 def test_max_rounds_termination(config):
     responses = [tool_call_response("grep", {"pattern": "x"}, call_id=f"c{i}") for i in range(10)]
     agent, _ = make_agent(config, responses)
