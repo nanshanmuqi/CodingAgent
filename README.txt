@@ -34,11 +34,23 @@
 
 交互命令
 --------
-    /help    显示帮助
-    /reset   清空对话上下文
-    /tokens  查看累计 token 用量
-    /quit    退出
-    Ctrl+C   中断当前任务
+    /help     显示帮助
+    /verbose  切换完整过程输出（默认只显示折叠摘要）
+    /reset    清空对话上下文
+    /tokens   查看累计 token 用量
+    /quit     退出
+    Ctrl+C    中断当前任务
+
+输出布局（三明治结构）
+--------------------
+每个任务的输出分三段，过程与结论分区，结论一眼可达：
+    头部  User > 前缀标记用户输入，Agent > 标记 agent 回合开始
+    主体  默认折叠：过程只在 spinner 中闪过，结束后输出一行摘要
+          （共 N 轮 · 调用工具 M 次）；/verbose 切换为完整流水
+          （══ 阶段 N ══ + [RESULT] 执行结果摘要，失败附错误摘要）
+    尾部  结论以 Markdown 渲染于带标题面板中，随后 [PROMPT] 下一步建议
+标记分层：User >/Agent >/折叠摘要/══ 阶段 ══/结论面板 为结构标记；
+[RESULT]/[PROMPT] 为任务内容；【系统】/【警告】/【错误】全角标签仅用于框架元信息。
 
 工具集（本地执行）
 -----------------
@@ -54,14 +66,15 @@ read_file / write_file / edit_file / run_command / grep / glob
 项目结构
 --------
 agent/
-    cli.py          CLI 入口：REPL、流式输出、工作状态显示、斜杠命令（rich 行内渲染）
+    cli.py          CLI 入口：REPL、三明治布局输出、工作状态显示、斜杠命令（rich 行内渲染）
     config.py       环境变量/配置加载与校验
     client.py       LLM 调用封装：重试、流式解析、tool_calls 拼装
     loop.py         Agent 主循环与全部终止条件
     context.py      消息历史、token 估算、上下文裁剪压缩
+    encoding.py     编码与环境适配：全项目统一 UTF-8（终端/子进程/文件/命令输出）
     permissions.py  路径防护、命令分级审批、out/ 输出目录解析
     tools/          6 个工具的 schema 定义与本地实现、注册表
-tests/              单元测试（pytest，35 个用例）
+tests/              单元测试（pytest）
 
 运行测试
 --------
@@ -75,3 +88,6 @@ tests/              单元测试（pytest，35 个用例）
 同一工具同参数连续失败 3 次（防卡死）。
 上下文管理：超出阈值时先将较早的超长工具输出压缩为摘要，仍超限则成组
 丢弃最旧对话（保证不留下孤立的 tool 消息），system 与最近消息始终保留。
+编码适配：全项目统一 UTF-8。标准流启动时重配置为 UTF-8；子进程注入
+PYTHONUTF8/PYTHONIOENCODING；命令输出与文件读取按 UTF-8 优先、系统
+代码页（GBK）兜底解码，Windows 中文环境下终端、工具输出均不乱码。

@@ -17,7 +17,7 @@ from typing import Callable, Optional
 from .client import LLMClient
 from .config import Config
 from .context import MessageHistory
-from .tools import execute_tool_call, tool_schemas
+from .tools import ToolResult, execute_tool_call, tool_schemas
 
 MAX_CONSECUTIVE_SAME_FAILURES = 3
 
@@ -30,13 +30,13 @@ class AgentLoop:
         history: MessageHistory,
         on_text: Optional[Callable[[str], None]] = None,
         on_tool_call: Optional[Callable[[str, dict], None]] = None,
-        on_tool_result: Optional[Callable[[str, bool], None]] = None,
+        on_tool_result: Optional[Callable[[str, ToolResult], None]] = None,
         on_status: Optional[Callable[[str, int], None]] = None,
     ):
         self._config = config
         self._client = client
         self._history = history
-        # 回调：流式文本 / 工具调用开始 / 工具执行结束 / 状态变化（供 CLI 展示，可全部留空）
+        # 回调：流式文本 / 工具调用开始 / 工具执行结束(含结果对象) / 状态变化（供 CLI 展示，可全部留空）
         self._on_text = on_text
         self._on_tool_call = on_tool_call
         self._on_tool_result = on_tool_result
@@ -87,7 +87,7 @@ class AgentLoop:
                 result = execute_tool_call(tool_call)
 
                 if self._on_tool_result:
-                    self._on_tool_result(name, result.ok)
+                    self._on_tool_result(name, result)
 
                 self._history.add_tool_result(tool_call["id"], result.to_message_content())
 

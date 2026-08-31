@@ -5,6 +5,7 @@ import fnmatch
 import os
 import re
 
+from ..encoding import read_text
 from ..permissions import resolve_in_workspace
 from .base import Tool, ToolResult
 
@@ -29,16 +30,16 @@ def _grep(pattern: str, path: str = ".", include: str = "", max_results: int = M
     def scan_file(file_path) -> None:
         nonlocal truncated
         try:
-            with open(file_path, encoding="utf-8", errors="ignore") as f:
-                for lineno, line in enumerate(f, 1):
-                    if regex.search(line):
-                        rel = os.path.relpath(file_path, resolve_in_workspace("."))
-                        matches.append(f"{rel}:{lineno}: {line.rstrip()[:200]}")
-                        if len(matches) >= max_results:
-                            truncated = True
-                            raise StopIteration
-        except (OSError, UnicodeError):
-            pass
+            text = read_text(file_path)  # UTF-8 优先，GBK 文件自动兜底
+        except OSError:
+            return
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if regex.search(line):
+                rel = os.path.relpath(file_path, resolve_in_workspace("."))
+                matches.append(f"{rel}:{lineno}: {line[:200]}")
+                if len(matches) >= max_results:
+                    truncated = True
+                    raise StopIteration
 
     try:
         if base.is_file():
@@ -54,11 +55,11 @@ def _grep(pattern: str, path: str = ".", include: str = "", max_results: int = M
         pass
 
     if not matches:
-        return ToolResult(ok=True, output="未找到匹配项")
+        return ToolResult(ok=True, output="未找到匹配项", summary="未找到匹配项")
     output = "\n".join(matches)
     if truncated:
         output += f"\n[结果过多已截断，仅显示前 {max_results} 条]"
-    return ToolResult(ok=True, output=output)
+    return ToolResult(ok=True, output=output, summary=f"命中 {len(matches)} 条")
 
 
 def _glob(pattern: str, path: str = ".") -> ToolResult:
@@ -80,8 +81,9 @@ def _glob(pattern: str, path: str = ".") -> ToolResult:
                     break
 
     if not results:
-        return ToolResult(ok=True, output="未找到匹配的文件")
-    return ToolResult(ok=True, output="\n".join(sorted(results)))
+        return ToolResult(ok=True, output="未找到匹配的文件", summary="未找到匹配的文件")
+    return ToolResult(ok=True, output="\n".join(sorted(results)),
+                      summary=f"找到 {len(results)} 个文件")
 
 
 grep_tool = Tool(

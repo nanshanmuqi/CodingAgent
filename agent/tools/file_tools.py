@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+from ..encoding import read_text
 from ..permissions import resolve_existing, resolve_in_workspace, resolve_output
 from .base import Tool, ToolResult
 
@@ -17,7 +18,7 @@ def _read_file(path: str, offset: int = 1, limit: int = MAX_READ_LINES) -> ToolR
     if not target.is_file():
         return ToolResult(ok=False, error=f"文件不存在：{path}")
 
-    lines = target.read_text(encoding="utf-8", errors="replace").splitlines()
+    lines = read_text(target).splitlines()  # UTF-8 优先，GBK 文件自动兜底不乱码
     total = len(lines)
     start = max(offset - 1, 0)
     end = min(start + limit, total)
@@ -30,7 +31,11 @@ def _read_file(path: str, offset: int = 1, limit: int = MAX_READ_LINES) -> ToolR
     notice = ""
     if end < total:
         notice = f"\n\n[已截断：仅显示第 {start + 1}-{end} 行，文件共 {total} 行]"
-    return ToolResult(ok=True, output=f"文件 {path}（共 {total} 行）：\n{body}{notice}")
+    return ToolResult(
+        ok=True,
+        output=f"文件 {path}（共 {total} 行）：\n{body}{notice}",
+        summary=f"读取 {path}（共 {total} 行）",
+    )
 
 
 def _write_file(path: str, content: str) -> ToolResult:
@@ -38,7 +43,8 @@ def _write_file(path: str, content: str) -> ToolResult:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     actual = target.relative_to(resolve_in_workspace("."))
-    return ToolResult(ok=True, output=f"已写入 {actual}（{len(content)} 字符）")
+    return ToolResult(ok=True, output=f"已写入 {actual}（{len(content)} 字符）",
+                      summary=f"已写入 {actual}（{len(content)} 字符）")
 
 
 def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) -> ToolResult:
@@ -46,7 +52,7 @@ def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False)
     if not target.is_file():
         return ToolResult(ok=False, error=f"文件不存在：{path}")
 
-    text = target.read_text(encoding="utf-8", errors="replace")
+    text = read_text(target)
     count = text.count(old_str)
     if count == 0:
         return ToolResult(ok=False, error="未找到匹配的 old_str，请先用 read_file 核对原文后重试")
@@ -58,7 +64,8 @@ def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False)
 
     new_text = text.replace(old_str, new_str) if replace_all else text.replace(old_str, new_str, 1)
     target.write_text(new_text, encoding="utf-8")
-    return ToolResult(ok=True, output=f"已编辑 {path}（替换 {count if replace_all else 1} 处）")
+    return ToolResult(ok=True, output=f"已编辑 {path}（替换 {count if replace_all else 1} 处）",
+                      summary=f"已编辑 {path}（替换 {count if replace_all else 1} 处）")
 
 
 read_file_tool = Tool(

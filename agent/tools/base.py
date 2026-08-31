@@ -7,10 +7,14 @@ from typing import Any, Callable
 
 @dataclass
 class ToolResult:
-    """工具执行的统一结果。失败时 error 非空，供回填模型自我修正。"""
+    """工具执行的统一结果。失败时 error 非空，供回填模型自我修正。
+
+    summary 为面向 CLI 的一行摘要（过程弱化展示用），与回填模型的完整 output 解耦。
+    """
     ok: bool
     output: str = ""
     error: str = ""
+    summary: str = ""
 
     def to_message_content(self) -> str:
         if self.ok:

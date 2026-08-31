@@ -31,7 +31,7 @@ def _get_int(name: str, default: int) -> int:
 
 def load_config() -> Config:
     """从环境变量/.env 加载配置，缺少必填项时直接退出并提示。"""
-    load_dotenv()
+    load_dotenv(encoding="utf-8")  # .env 统一按 UTF-8 读取，允许中文注释/值
 
     missing = [k for k in ("API_KEY", "BASE_URL", "MODEL_NAME") if not os.getenv(k, "").strip()]
     if missing:

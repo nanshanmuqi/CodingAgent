@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import subprocess
 
+from ..encoding import child_env, decode_bytes
 from ..permissions import DANGEROUS, FORBIDDEN, ask_approval, classify_command
 from .base import Tool, ToolResult
 
@@ -26,26 +27,26 @@ def _run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> ToolResult:
 
     timeout = max(1, min(int(timeout), MAX_TIMEOUT))
     try:
+        # 以字节捕获输出：cmd 输出按 OEM 代码页（GBK）编码，Python 子进程经
+        # child_env() 按 UTF-8 输出，事后用 decode_bytes 统一解码才两种都不乱码
         proc = subprocess.Popen(
             command,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            env=child_env(),
         )
     except OSError as e:
         return ToolResult(ok=False, error=f"命令启动失败：{e}")
 
     try:
-        output, _ = proc.communicate(timeout=timeout)
+        raw, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
         return ToolResult(ok=False, error=f"命令执行超过 {timeout} 秒，已强制终止")
 
-    output = output or ""
+    output = decode_bytes(raw or b"")
     truncated = len(output) > MAX_OUTPUT_CHARS
     if truncated:
         output = output[:MAX_OUTPUT_CHARS]
@@ -62,6 +63,7 @@ def _run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> ToolResult:
         ok=proc.returncode == 0,
         output="\n".join(parts),
         error="" if proc.returncode == 0 else "\n".join(parts),
+        summary=f"退出码 {proc.returncode}，输出 {len(output)} 字符",
     )
 
 

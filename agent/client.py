@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import json
 import time
 from typing import Callable, Optional
 
@@ -123,14 +122,3 @@ class LLMClient:
             "finish_reason": finish_reason or "stop",
             "usage": usage,
         }
-
-
-def format_tool_call_brief(tool_call: dict) -> str:
-    """生成工具调用的简短描述，供 CLI 日志使用。"""
-    name = tool_call["function"]["name"]
-    try:
-        args = json.loads(tool_call["function"]["arguments"] or "{}")
-    except json.JSONDecodeError:
-        args = {}
-    brief = ", ".join(f"{k}={str(v)[:60]!r}" for k, v in args.items())
-    return f"{name}({brief})"
