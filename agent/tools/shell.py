@@ -70,7 +70,8 @@ def _run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> ToolResult:
 run_command_tool = Tool(
     name="run_command",
     description=(
-        "在 Windows shell 中执行命令并返回输出与退出码。"
+        "在 Windows shell（cmd）中执行命令并返回输出与退出码。"
+        "命令须使用 cmd 语法（如 dir、type、copy，而非 PowerShell 的 Get-ChildItem、Get-Content、Copy-Item）。"
         "用于运行脚本、安装依赖、执行测试等。危险命令会被拒绝或要求用户确认。"
     ),
     parameters={

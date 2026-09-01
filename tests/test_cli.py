@@ -27,8 +27,8 @@ def test_stage_header_printed_once_with_model_title(capsys):
     cli._on_tool_result("read_file", ToolResult(ok=True, summary="读取 a.txt（共 3 行）"))
     cli._on_tool_call("grep", make_tool_call("grep", '{"pattern": "x"}'))  # 同轮第二个工具
     out = capsys.readouterr().out
-    assert out.count("══ 阶段 2：先读取数据文件。 ══") == 1
-    assert "  [RESULT] √ 读取 a.txt（共 3 行）" in out
+    assert out.count("══ Stage 2：先读取数据文件。 ══") == 1
+    assert "  √ 读取 a.txt（共 3 行）" in out
 
 
 def test_stage_header_fallback_title(capsys):
@@ -36,15 +36,15 @@ def test_stage_header_fallback_title(capsys):
     _reset()
     cli._on_status("waiting_model", 1)
     cli._on_tool_call("glob", make_tool_call("glob", '{"pattern": "*.py"}'))
-    assert "══ 阶段 1：工具执行 ══" in capsys.readouterr().out
+    assert "══ Stage 1：工具执行 ══" in capsys.readouterr().out
 
 
 def test_tool_result_failure_shows_error_brief(capsys):
-    """[RESULT] 失败行附错误摘要（仅首行，截断）。"""
+    """失败行附错误摘要（仅首行，截断）。"""
     _reset()
     cli._on_tool_result("run_command", ToolResult(ok=False, error="命令执行超过 60 秒\n详细堆栈…"))
     out = capsys.readouterr().out
-    assert "  [RESULT] × run_command：命令执行超过 60 秒" in out
+    assert "  × run_command：命令执行超过 60 秒" in out
     assert "详细堆栈" not in out
 
 
@@ -57,8 +57,9 @@ def test_verbose_off_suppresses_log_and_counts(capsys):
     cli._on_tool_result("read_file", ToolResult(ok=True, summary="读取 a.txt（共 3 行）"))
     cli._status_stop()
     out = capsys.readouterr().out
-    assert "[RESULT]" not in out
-    assert "══ 阶段" not in out
+    assert "√" not in out
+    assert "读取 a.txt" not in out
+    assert "══ Stage" not in out
     assert cli._tool_counts == {"read_file": 1}
     assert cli._tool_failures == 0
 
@@ -78,16 +79,17 @@ def test_run_summary_collapses_tool_counts(capsys):
 
 
 def test_tail_renders_body_and_prompts(capsys):
-    """尾部：结论以 Markdown 面板渲染，[PROMPT] 行单独列出。"""
+    """尾部：结论以 Markdown 面板渲染，建议以 Next steps: 单独列出。"""
     _reset()
     answer = "距离矩阵如下：\n\n| 从 | 到 | 距离 |\n|--|--|--|\n| A | B | 5 |\n\n[PROMPT] 把矩阵可视化\n[PROMPT] 增加负权边重算"
     cli._print_tail(answer)
     out = capsys.readouterr().out
-    assert "结论" in out                      # 面板标题
+    assert "Agent >" in out                  # Agent 前缀
     assert "距离矩阵如下" in out               # 正文进入面板
     assert "从" in out and "到" in out        # 表格内容被渲染
-    assert "[PROMPT] 把矩阵可视化" in out      # 建议单独列出
-    assert "[PROMPT] 增加负权边重算" in out
+    assert "Next steps:" in out               # 建议区标题只出现一次
+    assert "把矩阵可视化" in out
+    assert "增加负权边重算" in out
     assert ">>>" not in out                    # 不再使用逐行 >>> 前缀
 
 
@@ -98,13 +100,14 @@ def test_tail_extracts_bullet_prompts_and_strips_header(capsys):
     cli._print_tail(answer)
     out = capsys.readouterr().out
     assert "结果如下" in out
-    assert "[PROMPT] 把矩阵可视化" in out
-    assert "[PROMPT] 增加负权边重算" in out
+    assert "Next steps:" in out
+    assert "把矩阵可视化" in out
+    assert "增加负权边重算" in out
     assert "下一步建议：" not in out            # 小标题不残留
 
 
 def test_print_tagged_skips_blank_lines(capsys):
-    """元信息：空行只作视觉分隔不加标签，内容行逐行带全角标签。"""
+    """元信息：空行只作视觉分隔不加标签，内容行逐行带英文标签。"""
     _reset()
-    cli._print_tagged(cli.TAG_SYS, "\n第一\n\n第二", style="yellow")
-    assert capsys.readouterr().out.splitlines() == ["", "【系统】 第一", "", "【系统】 第二"]
+    cli._print_tagged(cli.TAG_INFO, "\n第一\n\n第二", style="yellow")
+    assert capsys.readouterr().out.splitlines() == ["", "[INFO] 第一", "", "[INFO] 第二"]

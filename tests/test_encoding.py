@@ -18,6 +18,12 @@ def test_decode_never_raises():
     assert isinstance(decode_bytes(b"\xff\xfe\x00invalid\x81"), str)
 
 
+def test_decode_gbk_fallback_even_in_utf8_mode(monkeypatch):
+    """Python UTF-8 模式下系统代码页被报告为 utf-8，GBK 字节仍应正确兜底解码。"""
+    monkeypatch.setattr("agent.encoding.locale.getpreferredencoding", lambda _: "utf-8")
+    assert decode_bytes("中文 GBK".encode("gbk")) == "中文 GBK"
+
+
 def test_read_text_roundtrip_and_fallback(tmp_path):
     utf8_file = tmp_path / "a.txt"
     utf8_file.write_bytes("你好 UTF-8".encode("utf-8"))

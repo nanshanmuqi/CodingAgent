@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -100,6 +101,10 @@ def _default_approval_handler(command: str) -> bool:
 
 _handler: Optional[ApprovalHandler] = None
 
+# 审批交互必须串行：并发执行工具时，多个危险命令若同时请求确认，
+# 终端提示会交错、输入也易错乱；用一把锁保证一次只处理一个审批。
+_approval_lock = threading.Lock()
+
 
 def set_approval_handler(handler: Optional[ApprovalHandler]) -> None:
     global _handler
@@ -108,7 +113,8 @@ def set_approval_handler(handler: Optional[ApprovalHandler]) -> None:
 
 def ask_approval(command: str) -> bool:
     handler = _handler or _default_approval_handler
-    try:
-        return bool(handler(command))
-    except (EOFError, KeyboardInterrupt):
-        return False
+    with _approval_lock:
+        try:
+            return bool(handler(command))
+        except (EOFError, KeyboardInterrupt):
+            return False

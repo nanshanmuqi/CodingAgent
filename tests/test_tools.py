@@ -147,3 +147,34 @@ def test_execute_tool_call_dispatch(workspace):
     _write_file("x.txt", "abc")
     result = execute_tool_call(make_tool_call("read_file", '{"path": "x.txt"}'))
     assert result.ok and "abc" in result.output
+
+
+# ---- 审批串行化 ----
+
+def test_approval_lock_serializes():
+    """并发请求审批时，handler 一次只被一个调用（审批锁生效）。"""
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    active = 0
+    max_active = 0
+    counter_lock = threading.Lock()
+
+    def handler(_cmd: str) -> bool:
+        nonlocal active, max_active
+        with counter_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with counter_lock:
+            active -= 1
+        return True
+
+    permissions.set_approval_handler(handler)
+    try:
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            list(pool.map(permissions.ask_approval, ["c1", "c2", "c3", "c4", "c5"]))
+        assert max_active == 1  # 从未出现并发进入 handler
+    finally:
+        permissions.set_approval_handler(None)

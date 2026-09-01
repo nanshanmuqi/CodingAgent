@@ -141,3 +141,56 @@ def test_api_error_reported(config):
     history = MessageHistory()
     agent = AgentLoop(config, BrokenClient(), history)
     assert "API 错误" in agent.run("任务")
+
+
+def test_parallel_tool_calls_fill_in_order(config):
+    """一轮返回多个 tool_calls：全部并发执行，tool 消息按原顺序回填。"""
+    responses = [
+        {
+            "content": None,
+            "tool_calls": [
+                {"id": "c1", "type": "function",
+                 "function": {"name": "write_file", "arguments": json.dumps({"path": "a.txt", "content": "A"})}},
+                {"id": "c2", "type": "function",
+                 "function": {"name": "write_file", "arguments": json.dumps({"path": "b.txt", "content": "B"})}},
+                {"id": "c3", "type": "function",
+                 "function": {"name": "glob", "arguments": json.dumps({"pattern": "*.txt"})}},
+            ],
+            "finish_reason": "tool_calls",
+            "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+        },
+        text_response("完成"),
+    ]
+    agent, history = make_agent(config, responses)
+    assert agent.run("创建文件") == "完成"
+    # tool 消息必须与 tool_call id 一一对应且顺序一致
+    tool_ids = [m["tool_call_id"] for m in history.messages if m["role"] == "tool"]
+    assert tool_ids == ["c1", "c2", "c3"]
+
+
+def test_parallel_tool_calls_approval_not_bypassed(config):
+    """并发执行时危险命令仍需用户审批，审批被拒绝则命令不执行。"""
+    approvals: list[str] = []
+    permissions.set_approval_handler(lambda cmd: approvals.append(cmd) or False)
+    try:
+        responses = [
+            {
+                "content": None,
+                "tool_calls": [
+                    {"id": "c1", "type": "function",
+                     "function": {"name": "write_file", "arguments": json.dumps({"path": "a.txt", "content": "x"})}},
+                    {"id": "c2", "type": "function",
+                     "function": {"name": "run_command", "arguments": json.dumps({"command": "del a.txt"})}},
+                ],
+                "finish_reason": "tool_calls",
+                "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10},
+            },
+            text_response("完成"),
+        ]
+        agent, history = make_agent(config, responses)
+        assert agent.run("任务") == "完成"
+        assert approvals == ["del a.txt"]
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in history.messages if m["role"] == "tool"}
+        assert "拒绝" in tool_msgs["c2"]
+    finally:
+        permissions.set_approval_handler(None)
