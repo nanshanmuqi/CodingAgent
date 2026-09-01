@@ -44,17 +44,18 @@ def test_tool_result_failure_shows_error_brief(renderer, capsys):
     assert "详细堆栈" not in out
 
 
-def test_verbose_off_suppresses_log_and_counts(renderer, capsys):
-    """非 verbose：工具过程不落永久行，仅累积折叠摘要统计。"""
+def test_verbose_off_shows_tool_log_but_folds_result_detail(renderer, capsys):
+    """默认模式：打印可观测日志（Stage + 工具名参数），但折叠 √/× 结果明细。"""
     renderer.toggle_verbose()  # 关闭完整过程
     renderer.on_status("waiting_model", 1)
     renderer.on_tool_call("read_file", make_tool_call("read_file", '{"path": "a.txt"}'))
     renderer.on_tool_result("read_file", ToolResult(ok=True, summary="读取 a.txt（共 3 行）"))
     renderer.status_stop()
     out = capsys.readouterr().out
-    assert "√" not in out
-    assert "读取 a.txt" not in out
-    assert "══ Stage" not in out
+    assert "> read_file a.txt" in out       # 工具调用可观测日志
+    assert "══ Stage" in out                 # 阶段标题默认可见
+    assert "√" not in out                    # 结果明细仍折叠
+    assert "读取 a.txt（共 3 行）" not in out  # summary 不落行
     assert renderer.tool_counts == {"read_file": 1}
     assert renderer.tool_failures == 0
 

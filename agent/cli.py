@@ -123,10 +123,14 @@ class UIRenderer:
     def on_tool_call(self, name: str, tool_call: dict) -> None:
         self.status_stop()  # 模型已返回（工具调用），思考结束
         self._tool_counts[name] = self._tool_counts.get(name, 0) + 1
-        if self._verbose and not self._stage_printed:
-            # 此刻该轮文本已完整缓冲（流式响应先于工具执行结束），可取出阶段名称
+        if not self._stage_printed:
+            # 阶段标题是结构标记，默认也可见（对齐需求：工具调用过程可观测）
             self._print_stage_header()
             self._stage_printed = True
+        if not self._verbose:
+            # 默认模式：打印一行可观测日志（工具名 + 关键参数），仅折叠 √/× 结果明细
+            console.print(f"  > {self._format_tool_call(name, tool_call)}",
+                          style=C_STRUCT, markup=False, highlight=False)
         self._status_start(f"[cyan]执行 {escape(name)}…[/cyan]")
 
     def on_tool_result(self, name: str, result: ToolResult) -> None:
@@ -207,6 +211,21 @@ class UIRenderer:
         title = next((l.strip() for l in self._round_text.splitlines() if l.strip()), "")
         title = title[:MAX_TITLE_LEN] or "工具执行"
         console.print(f"══ Stage {self._round_no}：{title} ══", style=C_STRUCT, markup=False, highlight=False)
+
+    @staticmethod
+    def _format_tool_call(name: str, tool_call: dict) -> str:
+        """生成一行可观测日志：工具名 + 关键参数（如 read_file a.txt）。"""
+        try:
+            args = json.loads(tool_call.get("function", {}).get("arguments", "") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return name
+        key = {"read_file": "path", "write_file": "path", "edit_file": "path",
+               "run_command": "command", "grep": "pattern", "glob": "pattern"}.get(name)
+        value = args.get(key) if key else None
+        if value is None:
+            return name
+        text = str(value)
+        return f"{name} {text[:60]}" if len(text) <= 60 else f"{name} {text[:60]}…"
 
 
 def _make_approval_handler(renderer: UIRenderer):
