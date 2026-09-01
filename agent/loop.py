@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from enum import Enum
 from typing import Callable, Optional
 
 from .client import LLMClient
@@ -24,6 +26,28 @@ from .trace import TraceLogger
 MAX_CONSECUTIVE_SAME_FAILURES = 3
 # 单轮工具调用的并发上限：防止模型一次发起过多调用时线程数失控
 MAX_PARALLEL_TOOL_CALLS = 8
+
+
+class RunStatus(str, Enum):
+    """一次任务执行的结束状态。"""
+    OK = "ok"            # 正常结束，text 为最终回答
+    STOPPED = "stopped"  # 命中终止条件（token/轮数/连续失败），text 为提示
+    ERROR = "error"      # API 等错误，text 为错误信息
+
+
+class StopReason(str, Enum):
+    """STOPPED 的具体原因，供界面做差异化提示。"""
+    TOKEN_BUDGET = "token_budget"
+    MAX_ROUNDS = "max_rounds"
+    CONSECUTIVE_FAILURES = "consecutive_failures"
+
+
+@dataclass
+class RunResult:
+    """AgentLoop.run 的结构化返回：用枚举替代字符串前缀区分结果类型。"""
+    status: RunStatus
+    text: str
+    reason: Optional[StopReason] = None  # 仅 status == STOPPED 时有值
 
 
 class AgentLoop:
@@ -52,8 +76,8 @@ class AgentLoop:
 
         self.total_tokens_used = 0  # 累计 token 用量（按 API 返回的 usage 统计）
 
-    def run(self, user_input: str) -> str:
-        """执行一轮用户任务，返回 agent 的最终文本回答。"""
+    def run(self, user_input: str) -> RunResult:
+        """执行一轮用户任务，返回结构化的 RunResult（status + 文本 + 停止原因）。"""
         self._history.add_user(user_input)
         if self._trace:
             self._trace.log_task(user_input)
@@ -65,7 +89,11 @@ class AgentLoop:
             # 终止条件 3：token 预算
             if self.total_tokens_used >= self._config.token_budget:
                 self._log_termination("token 预算耗尽", round_no)
-                return f"[已停止] 累计 token 用量达到预算上限（{self._config.token_budget}）。"
+                return RunResult(
+                    RunStatus.STOPPED,
+                    f"累计 token 用量达到预算上限（{self._config.token_budget}）。",
+                    StopReason.TOKEN_BUDGET,
+                )
 
             self._history.prune()
 
@@ -78,7 +106,7 @@ class AgentLoop:
                 )
             except RuntimeError as e:
                 self._log_termination("API 错误", round_no)
-                return f"[API 错误] {e}"
+                return RunResult(RunStatus.ERROR, str(e))
 
             usage = response.get("usage")
             if usage:
@@ -91,7 +119,7 @@ class AgentLoop:
             if not tool_calls:
                 self._log_round(round_no, usage, None, None)
                 self._log_termination("正常结束", round_no)
-                return response.get("content") or "(模型未返回内容)"
+                return RunResult(RunStatus.OK, response.get("content") or "(模型未返回内容)")
 
             # 先按模型返回顺序通知 CLI 本轮将执行的工具（状态由真实回调驱动）
             for tool_call in tool_calls:
@@ -126,10 +154,12 @@ class AgentLoop:
                     if consecutive_failures >= MAX_CONSECUTIVE_SAME_FAILURES:
                         self._log_round(round_no, usage, tool_calls, results)
                         self._log_termination("连续失败卡死", round_no)
-                        return (
-                            f"[已停止] 工具 {name} 以相同参数连续失败 "
+                        return RunResult(
+                            RunStatus.STOPPED,
+                            f"工具 {name} 以相同参数连续失败 "
                             f"{MAX_CONSECUTIVE_SAME_FAILURES} 次，模型疑似陷入循环。"
-                            f"最后错误：{result.error}"
+                            f"最后错误：{result.error}",
+                            StopReason.CONSECUTIVE_FAILURES,
                         )
 
             # 本轮工具执行完毕，记录一轮轨迹
@@ -137,9 +167,11 @@ class AgentLoop:
 
         # 终止条件 2：轮数耗尽
         self._log_termination("最大轮数", self._config.max_rounds)
-        return (
-            f"[已停止] 单任务已达到最大轮数（{self._config.max_rounds}）。"
-            "可通过 /reset 清空上下文后重试，或调大 MAX_ROUNDS。"
+        return RunResult(
+            RunStatus.STOPPED,
+            f"单任务已达到最大轮数（{self._config.max_rounds}）。"
+            "可通过 /reset 清空上下文后重试，或调大 MAX_ROUNDS。",
+            StopReason.MAX_ROUNDS,
         )
 
     def _log_round(

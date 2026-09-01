@@ -69,7 +69,7 @@ def test_loop_writes_round_and_termination(tmp_path, monkeypatch):
         trace=trace,
     )
 
-    assert agent.run("创建文件") == "完成"
+    assert agent.run("创建文件").text == "完成"
 
     records = [json.loads(line) for line in trace.path.read_text(encoding="utf-8").splitlines()]
     assert [r["event"] for r in records] == ["task", "round", "round", "termination"]

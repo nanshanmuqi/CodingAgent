@@ -6,7 +6,7 @@ import pytest
 from agent import permissions
 from agent.config import Config
 from agent.context import MessageHistory
-from agent.loop import AgentLoop
+from agent.loop import AgentLoop, RunStatus, StopReason
 
 
 class FakeClient:
@@ -58,7 +58,7 @@ def make_agent(config, responses):
 
 def test_simple_text_answer(config):
     agent, history = make_agent(config, [text_response("这是回答")])
-    assert agent.run("你好") == "这是回答"
+    assert agent.run("你好").text == "这是回答"
     assert agent.total_tokens_used == 10
     assert [m["role"] for m in history.messages] == ["system", "user", "assistant"]
 
@@ -69,7 +69,7 @@ def test_tool_call_then_answer(config):
         tool_call_response("write_file", {"path": "a.txt", "content": "hi"}),
         text_response("已创建 a.txt"),
     ])
-    assert agent.run("创建文件") == "已创建 a.txt"
+    assert agent.run("创建文件").text == "已创建 a.txt"
     assert agent._client.calls == 2
 
     roles = [m["role"] for m in history.messages]
@@ -87,7 +87,7 @@ def test_status_callback_reports_real_state(config):
         text_response("完成"),
     ])
     agent._on_status = lambda event, round_no: events.append((event, round_no))
-    assert agent.run("任务") == "完成"
+    assert agent.run("任务").text == "完成"
     # 两次调用模型 → 两次 waiting_model，轮次递增
     assert events == [("waiting_model", 1), ("waiting_model", 2)]
 
@@ -95,8 +95,10 @@ def test_status_callback_reports_real_state(config):
 def test_max_rounds_termination(config):
     responses = [tool_call_response("grep", {"pattern": "x"}, call_id=f"c{i}") for i in range(10)]
     agent, _ = make_agent(config, responses)
-    answer = agent.run("永远找下去")
-    assert "最大轮数" in answer
+    result = agent.run("永远找下去")
+    assert result.status == RunStatus.STOPPED
+    assert result.reason == StopReason.MAX_ROUNDS
+    assert "最大轮数" in result.text
     assert agent._client.calls == config.max_rounds
 
 
@@ -104,8 +106,10 @@ def test_token_budget_termination(config):
     config.token_budget = 10  # 第一轮即消耗 10 tokens，第二轮开始前触发停止
     agent, _ = make_agent(config, [tool_call_response("grep", {"pattern": "x"}),
                                    text_response("不会到达")])
-    answer = agent.run("任务")
-    assert "token" in answer and "预算" in answer
+    result = agent.run("任务")
+    assert result.status == RunStatus.STOPPED
+    assert result.reason == StopReason.TOKEN_BUDGET
+    assert "token" in result.text and "预算" in result.text
     assert agent._client.calls == 1  # 第二次调用未发生
 
 
@@ -116,8 +120,10 @@ def test_stuck_loop_termination(config):
         for i in range(5)
     ]
     agent, _ = make_agent(config, responses)
-    answer = agent.run("读不存在的文件")
-    assert "连续失败" in answer
+    result = agent.run("读不存在的文件")
+    assert result.status == RunStatus.STOPPED
+    assert result.reason == StopReason.CONSECUTIVE_FAILURES
+    assert "连续失败" in result.text
 
 
 def test_failure_counter_resets_after_success(config):
@@ -129,7 +135,7 @@ def test_failure_counter_resets_after_success(config):
         text_response("完成"),
     ]
     agent, _ = make_agent(config, responses)
-    assert agent.run("任务") == "完成"
+    assert agent.run("任务").text == "完成"
     assert agent._client.calls == 4
 
 
@@ -140,7 +146,9 @@ def test_api_error_reported(config):
 
     history = MessageHistory()
     agent = AgentLoop(config, BrokenClient(), history)
-    assert "API 错误" in agent.run("任务")
+    result = agent.run("任务")
+    assert result.status == RunStatus.ERROR
+    assert "模型 API 请求失败" in result.text
 
 
 def test_parallel_tool_calls_fill_in_order(config):
@@ -162,7 +170,7 @@ def test_parallel_tool_calls_fill_in_order(config):
         text_response("完成"),
     ]
     agent, history = make_agent(config, responses)
-    assert agent.run("创建文件") == "完成"
+    assert agent.run("创建文件").text == "完成"
     # tool 消息必须与 tool_call id 一一对应且顺序一致
     tool_ids = [m["tool_call_id"] for m in history.messages if m["role"] == "tool"]
     assert tool_ids == ["c1", "c2", "c3"]
@@ -188,7 +196,7 @@ def test_parallel_tool_calls_approval_not_bypassed(config):
             text_response("完成"),
         ]
         agent, history = make_agent(config, responses)
-        assert agent.run("任务") == "完成"
+        assert agent.run("任务").text == "完成"
         assert approvals == ["del a.txt"]
         tool_msgs = {m["tool_call_id"]: m["content"] for m in history.messages if m["role"] == "tool"}
         assert "拒绝" in tool_msgs["c2"]

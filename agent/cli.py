@@ -27,7 +27,7 @@ from .client import LLMClient
 from .config import load_config
 from .context import MessageHistory
 from .encoding import child_env, setup_stdio
-from .loop import AgentLoop
+from .loop import AgentLoop, RunStatus, StopReason
 from .permissions import set_approval_handler
 from .tools.base import ToolResult
 from .trace import TraceLogger
@@ -57,6 +57,13 @@ MAX_ERROR_LEN = 120   # 失败行附带的错误摘要最大长度
 
 # 模型自带、由本程序统一渲染的建议小标题（结论区渲染时跳过，避免与建议区重复）
 _SUGGESTION_HEADERS = {"下一步建议", "后续建议"}
+
+# 各停止原因的差异化建议：在 [INFO] 终止提示后追加一行，指导用户如何继续
+_STOP_HINTS = {
+    StopReason.TOKEN_BUDGET: "可通过调大 TOKEN_BUDGET 或 /reset 后重试。",
+    StopReason.MAX_ROUNDS: "可通过 /reset 清空上下文后重试，或调大 MAX_ROUNDS。",
+    StopReason.CONSECUTIVE_FAILURES: "模型疑似陷入循环，可 /reset 后换种方式描述任务。",
+}
 
 
 def _print_tagged(tag: str, text: str, style: str = "") -> None:
@@ -333,19 +340,22 @@ def main() -> None:
         start_time = time.monotonic()              # 本次任务计时起点
         tokens_before = agent.total_tokens_used    # 本次任务 token 增量起点
         try:
-            answer = agent.run(user_input)
+            result = agent.run(user_input)
             renderer.status_stop()  # 渲染尾部前停掉 spinner，避免与结论块交错
             console.print()  # 主体与尾部之间空行分隔
-            # 终止/错误提示（[...] 开头）不属于结论，按元信息展示；正常回答渲染尾部
-            if answer.startswith("[API 错误]"):
-                _print_tagged(TAG_ERROR, answer, style="red")
-            elif answer.startswith("["):
-                _print_tagged(TAG_INFO, answer, style="yellow")
-            else:
+            # 按结构化状态分流：错误 / 终止提示 / 正常回答，不再猜测字符串前缀
+            if result.status == RunStatus.ERROR:
+                _print_tagged(TAG_ERROR, result.text, style="red")
+            elif result.status == RunStatus.STOPPED:
+                _print_tagged(TAG_INFO, result.text, style="yellow")
+                hint = _STOP_HINTS.get(result.reason)
+                if hint:
+                    _print_tagged(TAG_INFO, hint, style="dim")
+            else:  # OK：正常回答渲染尾部
                 if not renderer.verbose and renderer.tool_counts:
                     renderer.print_run_summary()
                     console.print()
-                renderer.print_tail(answer)
+                renderer.print_tail(result.text)
         except KeyboardInterrupt:
             # 终止条件 4：用户中断当前任务，回到输入态
             _print_tagged(TAG_INFO, "\n已中断当前任务。", style="yellow")
