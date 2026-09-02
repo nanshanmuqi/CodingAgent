@@ -129,44 +129,86 @@ COMMANDS: list[tuple[str, str]] = [
     ("/quit", "退出程序"),
 ]
 
-HELP_TEXT = (
-    "命令：\n"
-    "  /help     显示本帮助\n"
-    "  /reset    清空对话上下文\n"
-    "  /resume   恢复历史会话（可接会话 id）\n"
-    "  /quit     退出\n"
-    "快捷键：\n"
-    "  Tab       补全斜杠命令\n"
-    "  Ctrl+C    中断任务\n"
-    "  Ctrl+Q    退出窗口"
-)
+# 工具类型 -> 圆点颜色（用于过程块折叠态/展开态的彩色圆点）
+TOOL_COLORS = {
+    "read_file": "cyan",
+    "write_file": "green",
+    "edit_file": "yellow",
+    "run_command": "magenta",
+    "grep": "blue",
+    "glob": "white",
+}
+
+# 状态栏阶段 -> 颜色
+PHASE_STYLES = {
+    "空闲": "dim",
+    "思考中": "yellow",
+    "执行工具": "cyan",
+    "完成": "green",
+}
+
+
+def _help_text() -> Text:
+    """构建带颜色的帮助面板内容：命令名/快捷键着色，描述用 dim。"""
+    t = Text("命令：\n", style="bold")
+    for cmd, desc in COMMANDS:
+        t.append(f"  {cmd:<8}", style="bold cyan")
+        t.append(f"{desc}\n", style="dim")
+    t.append("\n快捷键：\n", style="bold")
+    for key, desc in (("Tab", "补全斜杠命令"), ("Ctrl+C", "中断任务"), ("Ctrl+Q", "退出窗口")):
+        t.append(f"  {key:<8}", style="bold green")
+        t.append(f"{desc}\n", style="dim")
+    return t
 
 
 class UserMessage(Static):
-    """用户输入：`>` 前缀，加粗青色。"""
+    """用户输入：`▍User` 前缀加粗青色，正文默认色。"""
 
     def __init__(self, text: str) -> None:
-        super().__init__(Text(f"> {text}", style="bold cyan"), classes="user-msg")
+        super().__init__(
+            Text.assemble(("▍User  ", "bold cyan"), (text, "")),
+            classes="user-msg",
+        )
 
 
-class AgentMessage(Static):
-    """Agent 正文：流式累积，Markdown 渲染。"""
+class AgentMessage(Horizontal):
+    """Agent 正文：流式累积，Markdown 渲染，带 `▍Agent` 角色前缀。"""
 
     def __init__(self) -> None:
-        super().__init__("", classes="agent-msg")
+        super().__init__(classes="agent-msg")
         self._buf = ""
+        self._body = Static("", classes="agent-body")
+
+    def compose(self) -> ComposeResult:
+        yield Static(Text("▍Agent", style="bold green"), classes="agent-prefix")
+        yield self._body
 
     def append(self, chunk: str) -> None:
         self._buf += chunk
         body = _filter_body(self._buf)
-        self.update(Markdown(body) if body else Text("…", style="dim"))
+        self._body.update(Markdown(body) if body else Text("…", style="dim"))
 
 
 class SystemMessage(Static):
     """系统元信息（错误/终止提示），独立于会话正文。"""
 
-    def __init__(self, text: str, style: str = "red") -> None:
-        super().__init__(Text(text, style=style), classes="sys-msg")
+    def __init__(self, text, style: str = "red") -> None:
+        content = text if isinstance(text, Text) else Text(str(text), style=style)
+        super().__init__(content, classes="sys-msg")
+
+
+class Divider(Static):
+    """对话之间的分隔线。"""
+
+    def __init__(self) -> None:
+        super().__init__("", classes="divider")
+
+
+class HelpPanel(Static):
+    """帮助面板：命令与快捷键带颜色，独立于对话正文。"""
+
+    def __init__(self) -> None:
+        super().__init__(_help_text(), classes="help-panel")
 
 
 @dataclass
@@ -181,7 +223,7 @@ class TaskProcess(Static):
     """一个任务的工具过程：默认折叠成一行摘要，展开显示全部步骤。"""
 
     def __init__(self) -> None:
-        super().__init__("")
+        super().__init__("", classes="task-process")
         self._steps: list[_ToolStep] = []
         self._counts: dict[str, int] = {}
         self.expanded = False
@@ -204,13 +246,23 @@ class TaskProcess(Static):
 
     def _refresh(self) -> None:
         hint = "Ctrl+O 折叠" if self.expanded else "Ctrl+O 展开"
-        summary = " · ".join(f"{n} ×{c}" for n, c in self._counts.items())
-        header = Text(f"● 过程  {summary}   {hint}", style="dim")
+        header_parts: list = [Text("● 过程", style="dim")]
+        if self._counts:
+            counts = []
+            for name, count in self._counts.items():
+                color = TOOL_COLORS.get(name, "dim")
+                counts.append(Text(f"● {name} ×{count}", style=color))
+            header_parts.append(Text("  "))
+            header_parts.append(Text(" · ", style="dim").join(counts))
+        header_parts.append(Text(f"   {hint}", style="dim"))
+        header = Text.assemble(*header_parts)
         if self.expanded and self._steps:
             parts: list = [header]
             for step in self._steps:
                 title = step.title + (f"  {step.stat}" if step.stat else "")
-                parts.append(Text(f"\n  ● {title}", style="dim"))
+                color = TOOL_COLORS.get(step.title.split(" ", 1)[0], "dim")
+                parts.append(Text("\n  ● ", style=color))
+                parts.append(Text(title, style="dim"))
                 for line in step.lines:
                     parts.append(Text("\n    "))
                     parts.append(line)
@@ -227,11 +279,17 @@ class ConversationLog(VerticalScroll):
         self.processes: list[TaskProcess] = []
 
     def add_user(self, text: str) -> None:
+        if self.children:
+            self.mount(Divider())
         self.mount(UserMessage(text))
         self.scroll_end(animate=False)
 
-    def add_system(self, text: str, style: str = "red") -> None:
+    def add_system(self, text, style: str = "red") -> None:
         self.mount(SystemMessage(text, style))
+        self.scroll_end(animate=False)
+
+    def add_help(self) -> None:
+        self.mount(HelpPanel())
         self.scroll_end(animate=False)
 
     def add_agent_stream(self) -> AgentMessage:
@@ -304,16 +362,18 @@ class StatusBar(Static):
         self._refresh()
 
     def _refresh(self) -> None:
-        head = f"{self.mode}"
-        body = f"第{self.round}轮·{self.phase}" if self.round else self.phase
-        parts = [head, body]
+        phase_style = PHASE_STYLES.get(self.phase, "dim")
+        parts = [
+            Text(self.mode, style="dim"),
+            Text(f"第{self.round}轮·{self.phase}" if self.round else self.phase, style=phase_style),
+        ]
         if self.elapsed:
-            parts.append(f"{self.elapsed:.0f}s")
+            parts.append(Text(f"{self.elapsed:.0f}s", style="dim"))
         if self.tools:
-            parts.append(f"工具{self.tools}")
-        parts.append(f"上下文{self.context_pct}%")
-        parts.append(f"累计{self.tokens}/{self.budget}")
-        self.update(Text(" · ".join(parts), style="dim"))
+            parts.append(Text(f"工具{self.tools}", style="dim"))
+        parts.append(Text(f"上下文{self.context_pct}%", style="dim"))
+        parts.append(Text(f"累计{self.tokens}/{self.budget}", style="dim"))
+        self.update(Text(" · ", style="dim").join(parts))
 
 
 class ApprovalModal(ModalScreen[bool]):
@@ -440,9 +500,14 @@ class AgentApp(App):
         layout: vertical;
     }
     #header {
-        height: 1;
+        height: 3;
         padding: 0 1;
         background: $panel;
+        content-align: left middle;
+    }
+    #header-sep {
+        height: 1;
+        background: $surface;
     }
     #log {
         height: 1fr;
@@ -461,15 +526,40 @@ class AgentApp(App):
         margin-top: 1;
         margin-bottom: 1;
         padding: 0 1;
-        border-left: heavy cyan;
     }
     .agent-msg {
+        height: auto;
         margin-bottom: 1;
         padding: 0 1;
-        border-left: heavy magenta;
+    }
+    .agent-prefix {
+        width: 7;
+        color: green;
+    }
+    .agent-body {
+        width: 1fr;
+    }
+    .task-process {
+        margin: 1 0;
     }
     .sys-msg {
         margin-top: 1;
+    }
+    .divider {
+        height: 1;
+        margin: 1 0;
+        background: $surface;
+    }
+    .help-panel {
+        margin: 1 0;
+        padding: 1 2;
+        border: round $primary;
+        background: $surface;
+    }
+    MarkdownFence {
+        background: $surface;
+        border: round $primary;
+        padding: 0 1;
     }
     .prompts-msg {
         margin-bottom: 1;
@@ -558,13 +648,14 @@ class AgentApp(App):
 
     def compose(self) -> ComposeResult:
         yield Static(self._header_text(), id="header")
+        yield Static("", id="header-sep")
         self.conversation = ConversationLog()
         yield self.conversation
         self.statusbar = StatusBar()
         yield self.statusbar
         self._input = CommandInput(
             commands=[name for name, _ in COMMANDS],
-            placeholder="描述任务，或输入 / 命令（Tab 补全）…  Ctrl+Q 退出窗口",
+            placeholder="输入任务…（Tab 补全 / 命令 · Ctrl+Q 退出）",
             id="input",
         )
         yield self._input
@@ -619,7 +710,7 @@ class AgentApp(App):
         if cmd in ("/quit", "/exit"):
             self.exit()
         elif cmd == "/help":
-            self.conversation.add_system(HELP_TEXT, style="dim")
+            self.conversation.add_help()
         elif cmd == "/reset":
             self.history.reset()
             self.agent.total_tokens_used = 0
@@ -822,7 +913,7 @@ class AgentApp(App):
             self.statusbar.set_elapsed(0.0)
             if self._input is not None:
                 self._input.disabled = False
-                self._input.placeholder = "描述任务，或输入 / 命令（Tab 补全）…  Ctrl+Q 退出窗口"
+                self._input.placeholder = "输入任务…（Tab 补全 / 命令 · Ctrl+Q 退出）"
                 self._input.focus()
 
     def _tick_elapsed(self) -> None:

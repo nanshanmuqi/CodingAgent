@@ -13,10 +13,11 @@ class Config:
     base_url: str
     model_name: str
     max_rounds: int = 40
-    token_budget: int = 200_000
+    token_budget: int = 512_000
     command_timeout: int = 60
-    # 发送给模型的上下文 token 阈值，超过则触发裁剪（deepseek-chat 上下文为 64K）
-    max_context_tokens: int = 60_000
+    # 发送给模型的上下文 token 阈值，超过则触发裁剪。
+    # deepseek-v4 系列支持 1M 上下文，这里设 128K 以平衡长任务记忆与单轮成本。
+    max_context_tokens: int = 128_000
 
 
 def _get_int(name: str, default: int) -> int:
@@ -45,7 +46,7 @@ def load_config() -> Config:
         base_url=os.environ["BASE_URL"].strip(),
         model_name=os.environ["MODEL_NAME"].strip(),
         max_rounds=_get_int("MAX_ROUNDS", 40),
-        token_budget=_get_int("TOKEN_BUDGET", 200_000),
+        token_budget=_get_int("TOKEN_BUDGET", 512_000),
         command_timeout=_get_int("COMMAND_TIMEOUT", 60),
-        max_context_tokens=_get_int("MAX_CONTEXT_TOKENS", 60_000),
+        max_context_tokens=_get_int("MAX_CONTEXT_TOKENS", 128_000),
     )
