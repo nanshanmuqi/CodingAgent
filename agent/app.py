@@ -417,6 +417,10 @@ class ApprovalModal(ModalScreen[bool]):
 class SessionPickerModal(ModalScreen[str | None]):
     """会话选择器：上下键选择，Enter 恢复，Esc 取消。"""
 
+    BINDINGS = [
+        Binding("escape", "cancel", "取消", show=False),
+    ]
+
     def __init__(self, sessions: list[dict]) -> None:
         super().__init__()
         self._sessions = sessions
@@ -443,6 +447,9 @@ class SessionPickerModal(ModalScreen[str | None]):
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         self.dismiss(self._sessions[event.option_index]["session_id"])
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
 
 
 class CommandInput(Input):
