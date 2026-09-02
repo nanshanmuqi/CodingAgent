@@ -58,12 +58,21 @@ def _message_tokens(message: dict) -> int:
 
 
 class MessageHistory:
-    def __init__(self, max_context_tokens: int = 60_000, model_name: str | None = None):
+    def __init__(
+        self,
+        max_context_tokens: int = 60_000,
+        model_name: str | None = None,
+        messages: list[dict] | None = None,
+    ):
         self.max_context_tokens = max_context_tokens
-        system = SYSTEM_PROMPT
-        if model_name:
-            system += _IDENTITY_TEMPLATE.format(model_name=model_name)
-        self._messages: list[dict] = [{"role": "system", "content": system}]
+        if messages is not None:
+            # 从持久化会话恢复：直接使用已有消息（含 system），不再重建 system 提示
+            self._messages = messages
+        else:
+            system = SYSTEM_PROMPT
+            if model_name:
+                system += _IDENTITY_TEMPLATE.format(model_name=model_name)
+            self._messages = [{"role": "system", "content": system}]
 
     @property
     def messages(self) -> list[dict]:
@@ -71,6 +80,10 @@ class MessageHistory:
 
     def reset(self) -> None:
         self._messages = self._messages[:1]
+
+    def restore(self, messages: list[dict]) -> None:
+        """用已持久化的消息列表替换当前历史（供会话恢复）。"""
+        self._messages = messages
 
     def add_user(self, content: str) -> None:
         self._messages.append({"role": "user", "content": content})

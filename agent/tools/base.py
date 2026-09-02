@@ -15,6 +15,7 @@ class ToolResult:
     output: str = ""
     error: str = ""
     summary: str = ""
+    diff: str = ""
 
     def to_message_content(self) -> str:
         if self.ok:

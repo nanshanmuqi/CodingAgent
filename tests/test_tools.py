@@ -64,6 +64,16 @@ def test_edit_file_not_found_and_ambiguous(workspace):
     assert _edit_file("b.py", "foo", "baz", replace_all=True).ok  # 显式全量替换
 
 
+def test_edit_file_normalizes_crlf(workspace):
+    """跨行 old_str 用 \n，磁盘文件为 \r\n 时也应匹配（行尾归一化）。"""
+    target = workspace / "out" / "c.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes("x = 1\r\ny = 2\r\n".encode("utf-8"))
+    result = _edit_file("c.py", "x = 1\ny = 2", "x = 10\ny = 20")
+    assert result.ok
+    assert target.read_text(encoding="utf-8") == "x = 10\ny = 20\n"
+
+
 def test_path_escape_blocked(workspace):
     # 经 Tool.run 分发时，PermissionError 被转换为结构化错误结果（进程不崩溃）
     result = write_file_tool.run({"path": "../evil.txt", "content": "x"})
@@ -121,6 +131,7 @@ def test_run_command_dangerous_requires_approval(workspace, monkeypatch):
 def test_classify_command():
     assert classify_command("dir") == "safe"
     assert classify_command("python test.py") == "safe"
+    assert classify_command("echo a -> b") == "safe"  # 箭头 -> 不应误判为重定向
     assert classify_command("del a.txt") == "dangerous"
     assert classify_command("shutdown /s") == "forbidden"
     assert classify_command("rm -rf /") == "forbidden"

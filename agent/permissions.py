@@ -42,7 +42,7 @@ DANGEROUS_PATTERNS = [
     r"\btakeown\b",
     r"\bicacls\b",
     r"\battrib\b",
-    r">\s*[^\s]",  # 重定向覆盖写文件
+    r"(?<!-)>\s*[^\s]",  # 重定向覆盖写文件（(?<!-) 排除箭头 -> 等文本误判）
 ]
 
 SAFE = "safe"

@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import difflib
+
 from ..encoding import read_text
 from ..permissions import resolve_existing, resolve_in_workspace, resolve_output
 from .base import Tool, ToolResult
@@ -11,6 +13,21 @@ from .base import Tool, ToolResult
 # 单次读取的最大行数与单行最大长度，避免超大文件撑爆上下文
 MAX_READ_LINES = 400
 MAX_LINE_LENGTH = 2000
+
+
+def _make_diff(path: str, before: str, after: str) -> str:
+    """生成 unified diff 文本（供 UI 展示，不参与回填模型）。"""
+    if before == after:
+        return ""
+    return "\n".join(
+        difflib.unified_diff(
+            before.splitlines(),
+            after.splitlines(),
+            fromfile=f"a/{path}",
+            tofile=f"b/{path}",
+            lineterm="",
+        )
+    )
 
 
 def _read_file(path: str, offset: int = 1, limit: int = MAX_READ_LINES) -> ToolResult:
@@ -40,11 +57,17 @@ def _read_file(path: str, offset: int = 1, limit: int = MAX_READ_LINES) -> ToolR
 
 def _write_file(path: str, content: str) -> ToolResult:
     target = resolve_output(path)
+    before = ""
+    if target.is_file():
+        before = read_text(target).replace("\r\n", "\n")
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
+    # 统一写 LF：Windows 下 write_text 默认会把 \n 转成 \r\n，导致 edit_file 匹配行尾不一致
+    target.write_text(content, encoding="utf-8", newline="\n")
     actual = target.relative_to(resolve_in_workspace("."))
+    diff = _make_diff(str(actual), before, content.replace("\r\n", "\n"))
     return ToolResult(ok=True, output=f"已写入 {actual}（{len(content)} 字符）",
-                      summary=f"已写入 {actual}（{len(content)} 字符）")
+                      summary=f"已写入 {actual}（{len(content)} 字符）",
+                      diff=diff)
 
 
 def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False) -> ToolResult:
@@ -52,7 +75,9 @@ def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False)
     if not target.is_file():
         return ToolResult(ok=False, error=f"文件不存在：{path}")
 
-    text = read_text(target)
+    # 归一化行尾：read_file 展示给模型的是 splitlines 后的 \n，而磁盘可能是 \r\n，
+    # 若不归一化，跨行 old_str 会因行尾差异永远匹配失败。
+    text = read_text(target).replace("\r\n", "\n")
     count = text.count(old_str)
     if count == 0:
         return ToolResult(ok=False, error="未找到匹配的 old_str，请先用 read_file 核对原文后重试")
@@ -63,9 +88,11 @@ def _edit_file(path: str, old_str: str, new_str: str, replace_all: bool = False)
         )
 
     new_text = text.replace(old_str, new_str) if replace_all else text.replace(old_str, new_str, 1)
-    target.write_text(new_text, encoding="utf-8")
+    target.write_text(new_text, encoding="utf-8", newline="\n")
+    diff = _make_diff(path, text, new_text)
     return ToolResult(ok=True, output=f"已编辑 {path}（替换 {count if replace_all else 1} 处）",
-                      summary=f"已编辑 {path}（替换 {count if replace_all else 1} 处）")
+                      summary=f"已编辑 {path}（替换 {count if replace_all else 1} 处）",
+                      diff=diff)
 
 
 read_file_tool = Tool(

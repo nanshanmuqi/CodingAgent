@@ -1,5 +1,6 @@
 openai>=1.40
 python-dotenv>=1.0
-rich>=13.7
+rich>=14.2
+textual>=8.0
 tiktoken>=0.7
 pytest>=8.0
