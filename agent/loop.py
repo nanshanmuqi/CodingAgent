@@ -180,6 +180,15 @@ class AgentLoop:
             # 本轮工具执行完毕，记录一轮轨迹
             self._log_round(round_no, usage, tool_calls, results)
 
+            # 危险命令审批被用户拒绝：立即停止任务，不再回填模型让其换方式重试
+            if any(r.rejected for r in results):
+                self._log_termination("命令被用户取消", round_no)
+                return RunResult(
+                    RunStatus.STOPPED,
+                    "命令被你取消了",
+                    StopReason.CANCELLED,
+                )
+
         # 终止条件 2：轮数耗尽
         self._log_termination("最大轮数", self._config.max_rounds)
         return RunResult(

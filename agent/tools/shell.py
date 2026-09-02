@@ -23,7 +23,7 @@ def _run_command(command: str, timeout: int = DEFAULT_TIMEOUT) -> ToolResult:
     if level == FORBIDDEN:
         return ToolResult(ok=False, error=f"命令命中禁用规则，已拒绝执行：{command}")
     if level == DANGEROUS and not ask_approval(command):
-        return ToolResult(ok=False, error="用户拒绝了该命令的执行")
+        return ToolResult(ok=False, error="用户拒绝了该命令的执行", rejected=True)
 
     timeout = max(1, min(int(timeout), MAX_TIMEOUT))
     try:

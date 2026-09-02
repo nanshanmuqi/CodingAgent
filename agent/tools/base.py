@@ -16,6 +16,8 @@ class ToolResult:
     error: str = ""
     summary: str = ""
     diff: str = ""
+    # 危险命令审批被用户拒绝：主循环据此立即停止任务，不再回填模型重试
+    rejected: bool = False
 
     def to_message_content(self) -> str:
         if self.ok:

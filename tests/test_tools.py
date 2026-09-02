@@ -130,9 +130,14 @@ def test_run_command_dangerous_requires_approval(workspace, monkeypatch):
 
 def test_classify_command():
     assert classify_command("dir") == "safe"
-    assert classify_command("python test.py") == "safe"
     assert classify_command("echo a -> b") == "safe"  # 箭头 -> 不应误判为重定向
+    assert classify_command("python -m pytest") == "safe"  # 模块调用不算脚本执行
     assert classify_command("del a.txt") == "dangerous"
+    assert classify_command("python test.py") == "dangerous"  # 脚本间接执行需确认
+    assert classify_command("python -c \"import os; os.remove('x')\"") == "dangerous"
+    assert classify_command("node delete.js") == "dangerous"
+    assert classify_command("powershell -File clean.ps1") == "dangerous"
+    assert classify_command("build.bat") == "dangerous"
     assert classify_command("shutdown /s") == "forbidden"
     assert classify_command("rm -rf /") == "forbidden"
 

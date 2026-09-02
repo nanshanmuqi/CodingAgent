@@ -45,6 +45,27 @@ DANGEROUS_PATTERNS = [
     r"(?<!-)>\s*[^\s]",  # 重定向覆盖写文件（(?<!-) 排除箭头 -> 等文本误判）
 ]
 
+# 间接脚本执行：命令文本本身不含危险关键字，但会通过解释器/脚本宿主运行任意
+# 脚本或内联代码，实际行为对分级器不可见，可能绕过上面的危险命令识别
+# （例如先写一个删除脚本，再 python/脚本宿主运行它）。这类命令同样需用户确认。
+SCRIPT_EXECUTION_PATTERNS = [
+    # Python：运行 .py 脚本或 -c 内联代码（-m 模块调用如 pytest 不在此列）
+    r"\bpy(?:thon)?3?(?:\.exe)?\s+\S+\.py\b",
+    r"\bpy(?:thon)?3?(?:\.exe)?\s+-c\b",
+    # Node.js：运行 .js/.mjs/.cjs 脚本或 -e 内联代码
+    r"\bnode(?:\.exe)?\s+\S+\.(?:js|mjs|cjs)\b",
+    r"\bnode(?:\.exe)?\s+-e\b",
+    # PowerShell / pwsh：完整 shell + .NET，可执行任意代码，一律需确认
+    r"\b(?:powershell|pwsh)(?:\.exe)?\b",
+    # 批处理脚本：直接运行 .bat/.cmd
+    r"(?:^|[\s;&|])\S+\.(?:bat|cmd)\b",
+    # Windows 脚本宿主：运行 VBS/JS 脚本
+    r"\b(?:wscript|cscript)(?:\.exe)?\b",
+    # bash / sh：运行 .sh 脚本或 -c 内联代码
+    r"\b(?:bash|sh)\s+\S+\.sh\b",
+    r"\b(?:bash|sh)\s+-c\b",
+]
+
 SAFE = "safe"
 DANGEROUS = "dangerous"
 FORBIDDEN = "forbidden"
@@ -84,6 +105,9 @@ def classify_command(command: str) -> str:
         if re.search(pattern, lowered):
             return FORBIDDEN
     for pattern in DANGEROUS_PATTERNS:
+        if re.search(pattern, lowered):
+            return DANGEROUS
+    for pattern in SCRIPT_EXECUTION_PATTERNS:
         if re.search(pattern, lowered):
             return DANGEROUS
     return SAFE

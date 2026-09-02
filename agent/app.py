@@ -394,8 +394,8 @@ class ApprovalModal(ModalScreen[bool]):
             yield Static("危险命令，需要确认：", classes="approval-title")
             yield Static(self.command, classes="approval-command")
             with Horizontal(id="approval-buttons"):
-                yield Button("执行 [y]", variant="error", id="yes")
-                yield Button("拒绝 [n]", variant="primary", id="no")
+                yield Button("执行 \\[y]", variant="error", id="yes")
+                yield Button("拒绝 \\[n]", variant="primary", id="no")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "yes":

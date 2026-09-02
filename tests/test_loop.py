@@ -177,7 +177,7 @@ def test_parallel_tool_calls_fill_in_order(config):
 
 
 def test_parallel_tool_calls_approval_not_bypassed(config):
-    """并发执行时危险命令仍需用户审批，审批被拒绝则命令不执行。"""
+    """并发执行时危险命令仍需用户审批，审批被拒绝则任务立即停止，不再重试。"""
     approvals: list[str] = []
     permissions.set_approval_handler(lambda cmd: approvals.append(cmd) or False)
     try:
@@ -196,7 +196,12 @@ def test_parallel_tool_calls_approval_not_bypassed(config):
             text_response("完成"),
         ]
         agent, history = make_agent(config, responses)
-        assert agent.run("任务").text == "完成"
+        result = agent.run("任务")
+        # 拒绝后立即停止，不再发起第二次模型调用（不会换脚本等其它方式重试）
+        assert result.status == RunStatus.STOPPED
+        assert result.reason == StopReason.CANCELLED
+        assert result.text == "命令被你取消了"
+        assert agent._client.calls == 1
         assert approvals == ["del a.txt"]
         tool_msgs = {m["tool_call_id"]: m["content"] for m in history.messages if m["role"] == "tool"}
         assert "拒绝" in tool_msgs["c2"]
