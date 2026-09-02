@@ -41,8 +41,13 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         on_text: Optional[Callable[[str], None]] = None,
+        should_stop: Optional[Callable[[], bool]] = None,
     ) -> dict:
-        """发起一次对话请求。on_text 提供时启用流式输出并逐段回调。"""
+        """发起一次对话请求。on_text 提供时启用流式输出并逐段回调。
+
+        should_stop 提供时，流式接收过程中每到一个分片会询问一次；返回 True
+        则提前结束本次请求（用于用户中断），此时返回部分内容。
+        """
         kwargs: dict = {
             "model": self._model,
             "messages": messages,
@@ -57,7 +62,7 @@ class LLMClient:
         for attempt in range(MAX_RETRIES):
             try:
                 stream = self._client.chat.completions.create(**kwargs)
-                return self._consume_stream(stream, on_text)
+                return self._consume_stream(stream, on_text, should_stop)
             except (openai.APIConnectionError, openai.RateLimitError, openai.InternalServerError) as e:
                 last_error = e
                 if attempt < MAX_RETRIES - 1:
@@ -68,14 +73,23 @@ class LLMClient:
         raise RuntimeError(f"模型 API 请求失败，已重试 {MAX_RETRIES} 次：{last_error}") from last_error
 
     @staticmethod
-    def _consume_stream(stream, on_text: Optional[Callable[[str], None]]) -> dict:
-        """解析流式响应：文本增量回调；tool_calls 按 index 分片累积拼装。"""
+    def _consume_stream(
+        stream,
+        on_text: Optional[Callable[[str], None]],
+        should_stop: Optional[Callable[[], bool]] = None,
+    ) -> dict:
+        """解析流式响应：文本增量回调；tool_calls 按 index 分片累积拼装。
+
+        should_stop 提供且返回 True 时提前中断流式接收（用户中断）。
+        """
         content_parts: list[str] = []
         tool_calls: dict[int, dict] = {}
         finish_reason: Optional[str] = None
         usage: Optional[dict] = None
 
         for chunk in stream:
+            if should_stop is not None and should_stop():
+                break
             if chunk.usage is not None:
                 usage = {
                     "prompt_tokens": chunk.usage.prompt_tokens,

@@ -6,12 +6,13 @@
 1. 模型返回 stop 且无 tool_calls —— 正常结束
 2. 单任务超过 max_rounds 轮 —— 强制停止
 3. 累计 token 用量超过 token_budget —— 强制停止
-4. 用户 Ctrl+C（KeyboardInterrupt 向上抛给 CLI 处理）
+4. 用户中断（TUI 按 Ctrl+C 调用 cancel() 置位中断标志，循环在检查点停止）
 5. 同一工具以相同参数连续失败 3 次 —— 判定卡死，强制停止
 """
 from __future__ import annotations
 
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
@@ -40,6 +41,7 @@ class StopReason(str, Enum):
     TOKEN_BUDGET = "token_budget"
     MAX_ROUNDS = "max_rounds"
     CONSECUTIVE_FAILURES = "consecutive_failures"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -75,9 +77,12 @@ class AgentLoop:
         self._trace = trace
 
         self.total_tokens_used = 0  # 累计 token 用量（按 API 返回的 usage 统计）
+        # 用户中断标志：UI 线程经 cancel() 置位，run() 在检查点轮询，线程安全
+        self._cancel_event = threading.Event()
 
     def run(self, user_input: str) -> RunResult:
         """执行一轮用户任务，返回结构化的 RunResult（status + 文本 + 停止原因）。"""
+        self._cancel_event.clear()  # 清掉上一次任务可能残留的中断标志
         self._history.add_user(user_input)
         if self._trace:
             self._trace.log_task(user_input)
@@ -86,6 +91,9 @@ class AgentLoop:
         consecutive_failures = 0
 
         for round_no in range(1, self._config.max_rounds + 1):
+            # 终止条件 4：用户中断
+            if (cancelled := self._cancelled(round_no)) is not None:
+                return cancelled
             # 终止条件 3：token 预算
             if self.total_tokens_used >= self._config.token_budget:
                 self._log_termination("token 预算耗尽", round_no)
@@ -102,11 +110,18 @@ class AgentLoop:
 
             try:
                 response = self._client.chat(
-                    self._history.messages, tools=schemas, on_text=self._on_text
+                    self._history.messages,
+                    tools=schemas,
+                    on_text=self._on_text,
+                    should_stop=self._cancel_event.is_set,
                 )
             except RuntimeError as e:
                 self._log_termination("API 错误", round_no)
                 return RunResult(RunStatus.ERROR, str(e))
+
+            # 等待模型期间被中断：丢弃本次响应，不再执行本轮工具调用
+            if (cancelled := self._cancelled(round_no)) is not None:
+                return cancelled
 
             usage = response.get("usage")
             if usage:
@@ -172,6 +187,21 @@ class AgentLoop:
             f"单任务已达到最大轮数（{self._config.max_rounds}）。"
             "可通过 /reset 清空上下文后重试，或调大 MAX_ROUNDS。",
             StopReason.MAX_ROUNDS,
+        )
+
+    def cancel(self) -> None:
+        """请求中断当前任务：线程安全，循环在下一个检查点（轮首/模型返回后）停止。"""
+        self._cancel_event.set()
+
+    def _cancelled(self, round_no: int) -> Optional[RunResult]:
+        """命中用户中断时构造 STOPPED 结果，否则返回 None。"""
+        if not self._cancel_event.is_set():
+            return None
+        self._log_termination("用户中断", round_no)
+        return RunResult(
+            RunStatus.STOPPED,
+            "任务已被用户中断（Ctrl+C）。",
+            StopReason.CANCELLED,
         )
 
     def _log_round(

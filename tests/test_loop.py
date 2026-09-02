@@ -17,7 +17,7 @@ class FakeClient:
         self.calls = 0
         self.seen_messages: list[list[dict]] = []
 
-    def chat(self, messages, tools=None, on_text=None):
+    def chat(self, messages, tools=None, on_text=None, should_stop=None):
         self.calls += 1
         self.seen_messages.append([dict(m) for m in messages])
         assert tools, "主循环应始终携带工具 schema"
@@ -141,7 +141,7 @@ def test_failure_counter_resets_after_success(config):
 
 def test_api_error_reported(config):
     class BrokenClient:
-        def chat(self, messages, tools=None, on_text=None):
+        def chat(self, messages, tools=None, on_text=None, should_stop=None):
             raise RuntimeError("模型 API 请求失败")
 
     history = MessageHistory()

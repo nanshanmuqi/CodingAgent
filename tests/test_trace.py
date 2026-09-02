@@ -14,7 +14,7 @@ class FakeClient:
     def __init__(self, responses: list[dict]):
         self._responses = list(responses)
 
-    def chat(self, messages, tools=None, on_text=None):
+    def chat(self, messages, tools=None, on_text=None, should_stop=None):
         response = self._responses.pop(0)
         if on_text and response.get("content"):
             on_text(response["content"])

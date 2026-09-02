@@ -13,7 +13,9 @@ import json
 import os
 import queue
 import re
+import signal
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
@@ -135,7 +137,8 @@ HELP_TEXT = (
     "  /quit     退出\n"
     "快捷键：\n"
     "  Tab       补全斜杠命令\n"
-    "  Ctrl+C    退出"
+    "  Ctrl+C    中断任务\n"
+    "  Ctrl+Q    退出窗口"
 )
 
 
@@ -277,6 +280,7 @@ class StatusBar(Static):
         self.context_pct = 0
         self.tokens = 0
         self.budget = 0
+        self.elapsed = 0.0
         self._refresh()
 
     def set_round(self, round_no: int, phase: str) -> None:
@@ -295,10 +299,16 @@ class StatusBar(Static):
         self.context_pct = context_pct
         self._refresh()
 
+    def set_elapsed(self, seconds: float) -> None:
+        self.elapsed = seconds
+        self._refresh()
+
     def _refresh(self) -> None:
         head = f"{self.mode}"
         body = f"第{self.round}轮·{self.phase}" if self.round else self.phase
         parts = [head, body]
+        if self.elapsed:
+            parts.append(f"{self.elapsed:.0f}s")
         if self.tools:
             parts.append(f"工具{self.tools}")
         parts.append(f"上下文{self.context_pct}%")
@@ -499,6 +509,7 @@ class AgentApp(App):
     """
 
     BINDINGS = [
+        Binding("ctrl+c", "cancel_task", "中断任务", show=False, priority=True),
         Binding("ctrl+o", "toggle_step", "展开/折叠", show=False),
     ]
 
@@ -528,6 +539,7 @@ class AgentApp(App):
             trace=trace,
         )
         set_approval_handler(self._make_approval_handler())
+        self._install_sigint_handler()
 
         self._store = SessionStore()
         self._session_id = session_id or new_session_id()
@@ -540,6 +552,9 @@ class AgentApp(App):
         self._tool_count = 0
         self._round_no = 0
         self._mode = "auto"
+        self._task_running = False  # 是否有任务正在后台线程执行（避开 Textual App._running 命名冲突）
+        self._started_at = 0.0      # 当前任务开始时间（time.monotonic），用于状态栏计时
+        self._input: Optional[CommandInput] = None
 
     def compose(self) -> ComposeResult:
         yield Static(self._header_text(), id="header")
@@ -547,17 +562,19 @@ class AgentApp(App):
         yield self.conversation
         self.statusbar = StatusBar()
         yield self.statusbar
-        yield CommandInput(
+        self._input = CommandInput(
             commands=[name for name, _ in COMMANDS],
-            placeholder="描述任务，或输入 / 命令（Tab 补全）…  Ctrl+C 退出",
+            placeholder="描述任务，或输入 / 命令（Tab 补全）…  Ctrl+Q 退出窗口",
             id="input",
         )
+        yield self._input
 
     def on_mount(self) -> None:
         self.statusbar.set_usage(0, self.config.token_budget, self._context_pct())
         self.query_one("#input").focus()
         self.set_interval(0.05, self._drain)
-        self.conversation.add_system("直接输入任务开始 · Ctrl+C 退出", style="dim")
+        self.set_interval(1.0, self._tick_elapsed)
+        self.conversation.add_system("直接输入任务开始 · Ctrl+C 中断 · Ctrl+Q 退出窗口", style="dim")
 
     # ---- 回调（worker 线程触发，只投递事件，不碰 Widget）----
 
@@ -574,7 +591,10 @@ class AgentApp(App):
         self._events.put(("status", event, round_no))
 
     def _run_agent(self, task: str) -> None:
-        result = self.agent.run(task)
+        try:
+            result = self.agent.run(task)
+        except Exception as e:
+            result = RunResult(RunStatus.ERROR, f"{type(e).__name__}: {e}")
         self._events.put(("done", result))
 
     # ---- 输入提交：启动后台线程执行 agent ----
@@ -591,6 +611,7 @@ class AgentApp(App):
         self.conversation.add_user(task)
         self._reset_task_state()
         self.statusbar.set_round(0, "思考中")
+        self._set_running(True)
         threading.Thread(target=self._run_agent, args=(task,), daemon=True).start()
 
     def _handle_command(self, cmd: str) -> None:
@@ -758,6 +779,7 @@ class AgentApp(App):
         return f"× {brief}"
 
     def _finish(self, result: RunResult) -> None:
+        self._set_running(False)
         if result.status == RunStatus.ERROR:
             self.conversation.add_system(f"[ERROR] {result.text}", "red")
         elif result.status == RunStatus.STOPPED:
@@ -786,6 +808,50 @@ class AgentApp(App):
         )
 
     # ---- 内部 ----
+
+    def _set_running(self, running: bool) -> None:
+        """切换运行态：运行中禁用输入并计时，结束后恢复并重新聚焦。"""
+        self._task_running = running
+        if running:
+            self._started_at = time.monotonic()
+            if self._input is not None:
+                self._input.disabled = True
+                self._input.placeholder = "运行中… Ctrl+C 中断"
+        else:
+            self._started_at = 0.0
+            self.statusbar.set_elapsed(0.0)
+            if self._input is not None:
+                self._input.disabled = False
+                self._input.placeholder = "描述任务，或输入 / 命令（Tab 补全）…  Ctrl+Q 退出窗口"
+                self._input.focus()
+
+    def _tick_elapsed(self) -> None:
+        """每秒刷新状态栏耗时。"""
+        if self._task_running:
+            self.statusbar.set_elapsed(time.monotonic() - self._started_at)
+
+    def action_cancel_task(self) -> None:
+        """Ctrl+C：中断当前后台任务。"""
+        if not self._task_running:
+            return
+        self.agent.cancel()
+        self.conversation.add_system("正在中断当前任务…", style="yellow")
+
+    def _install_sigint_handler(self) -> None:
+        """兜底拦截 Ctrl+C 信号，转为请求中断任务，避免进程被直接终止。
+
+        Textual 在 Windows 下会关闭控制台的 ENABLE_PROCESSED_INPUT，把 Ctrl+C
+        转成按键交给 ctrl+c → cancel_task 绑定处理；但某些终端（如 ConPTY/Windows
+        Terminal）在流式输出期间仍可能把 Ctrl+C 以 SIGINT 信号送达，导致进程被
+        直接杀死、窗口关闭。这里再兜底一层，把信号改为置位中断标志。
+        """
+        def handler(signum, frame):
+            self.agent.cancel()
+
+        try:
+            signal.signal(signal.SIGINT, handler)
+        except (ValueError, OSError):
+            pass  # 非主线程或平台不支持时忽略
 
     def _reset_task_state(self) -> None:
         self._pending_steps.clear()
